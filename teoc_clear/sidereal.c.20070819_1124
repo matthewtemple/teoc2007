@@ -1,0 +1,602 @@
+/*  sidereal.c - created 2007 by inhaesio zha                                */
+/*  gcc -ansi -O3 -lcurses -o sidereal sidereal.c                            */
+/*                                                                           */
+/*  make position_index_from_observe_location/eight_from_eight do something  */
+/*  smarter, something that observes more than one bit from each neighbor?   */
+
+#include <curses.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define MEET_STYLE_PUSH 0
+#define MEET_STYLE_PULL 1
+#define MEET_STYLE_EXCHANGE 2
+
+#define RANDOM_SEED 0
+#define GENOME_ADDRESS_SIZE 10
+#define GENOME_LENGTH 1024         /*  2^GENOME_ADDRESS_SIZE==GENOME_LENGTH  */
+#define MEET_STYLE MEET_STYLE_PUSH
+#define WORLD_WIDTH 80
+#define WORLD_HEIGHT 40
+
+/* consider whether these indexes should start at 1 or higher                */
+#define GENE_INDEX_DISPLAY 0
+#define GENE_INDEX_MOVE 1
+#define GENE_INDEX_MEET 2
+#define GENE_INDEX_MEET_WHO 3
+#define GENE_INDEX_MEET_START 4
+#define GENE_INDEX_MEET_LENGTH 5
+
+#define CURSES_VISUALIZATION 1
+#define CURSES_SOLID_COLORS 0
+#define SLEEP_US 100000
+
+struct meet_gene_t {
+	unsigned int address;
+	unsigned int length;
+};
+typedef struct meet_gene_t meet_gene_t;
+
+struct display_gene_t {
+	unsigned int red;
+	unsigned int green;
+	unsigned int blue;
+};
+typedef struct display_gene_t display_gene_t;
+
+struct position_t {
+	unsigned int x;
+	unsigned int y;
+};
+typedef struct position_t position_t;
+
+struct relative_position_t {
+	int x;
+	int y;
+};
+typedef struct relative_position_t relative_position_t;
+
+struct organism_t {
+	unsigned int *genome;
+	position_t position;
+	char face;
+};
+typedef struct organism_t organism_t;
+
+struct world_t {
+	organism_t *organisms[WORLD_WIDTH][WORLD_HEIGHT];
+};
+typedef struct world_t world_t;
+
+void destroy_organism(organism_t *organism);
+void destroy_world(world_t *world);
+char display_color(organism_t *organism);
+unsigned int eight_from_eight(organism_t *organism, unsigned int uint_0,
+		unsigned int uint_1, unsigned int uint_2, unsigned int uint_3,
+		unsigned int uint_4, unsigned int uint_5, unsigned int uint_6,
+		unsigned int uint_7);
+unsigned int gene_at_virtual_index(organism_t *organism,
+		unsigned int virtual_index);
+unsigned int gene_start_address(organism_t *organism, unsigned int gene_index);
+void iterate_organism(world_t *world, organism_t *organism);
+void iterate_world(world_t *world);
+void meet_organism(world_t *world, organism_t *organism);
+void meet_organism_details(world_t *world, organism_t *organism_a,
+		organism_t *organism_b);
+void move_organism(world_t *world, organism_t *organism);
+organism_t *new_organism(unsigned int position_x, unsigned int position_y);
+world_t *new_world();
+organism_t *organism_at_virtual_coordinates(world_t *world, int virtual_x,
+		int virtual_y);
+void parse_display_gene(organism_t *organism, unsigned int gene_start_address,
+		display_gene_t *display_gene);
+void parse_meet_gene(organism_t *organism, unsigned int gene_start_address,
+		meet_gene_t *meet_gene);
+unsigned int position_index_for_observe_location(world_t *world,
+		organism_t *organism, unsigned int observe_location);
+relative_position_t relative_position_from_index(unsigned int index);
+unsigned int random_unsigned_int(unsigned int range);
+unsigned int unsigned_int_from_genome(organism_t *organism,
+		unsigned int gene_start_address, unsigned int gene_length);
+unsigned int wrapped_index(int virtual_index, unsigned int range);
+
+void destroy_organism(organism_t *organism)
+{
+	free(organism->genome);
+	free(organism);
+}
+
+void destroy_world(world_t *world)
+{
+	unsigned int each_x;
+	unsigned int each_y;
+
+	for (each_x = 0; each_x < WORLD_WIDTH; each_x++) {
+		for (each_y = 0; each_y < WORLD_HEIGHT; each_y++) {
+			destroy_organism(world->organisms[each_x][each_y]);
+		}
+	}
+
+	free(world);
+}
+
+char display_color(organism_t *organism)
+{
+	unsigned int display_gene_start_address;
+	display_gene_t display_gene;
+	char c;
+
+	display_gene_start_address = gene_start_address(organism,
+			GENE_INDEX_DISPLAY);
+	parse_display_gene(organism, display_gene_start_address, &display_gene);
+
+	if ((display_gene.red > display_gene.blue)
+			&& (display_gene.red > display_gene.green)) {
+		c = 'r';
+	}
+	else if ((display_gene.green > display_gene.red)
+			&& (display_gene.green > display_gene.blue)) {
+		c = 'g';
+	}
+	else if ((display_gene.blue > display_gene.green)
+			&& (display_gene.blue > display_gene.red)) {
+		c = 'b';
+	}
+	else {
+		c = 'w';
+	}
+
+	return c;
+}
+
+unsigned int eight_from_eight(organism_t *organism, unsigned int uint_0,
+		unsigned int uint_1, unsigned int uint_2, unsigned int uint_3,
+		unsigned int uint_4, unsigned int uint_5, unsigned int uint_6,
+		unsigned int uint_7)
+{
+	unsigned int cells[8][8];
+	unsigned int each_x;
+	unsigned int each_y;
+	unsigned int ca_in_0;
+	unsigned int ca_in_1;
+	unsigned int ca_in_2;
+	unsigned int ca_index_0;
+	unsigned int ca_index_1;
+	unsigned int ca_index_2;
+	unsigned int ca_out_address;
+	unsigned int ca_out;
+	unsigned int result;
+	unsigned int result_bit_0;
+	unsigned int result_bit_1;
+	unsigned int result_bit_2;
+
+	cells[0][0] = uint_0;
+	cells[1][0] = uint_1;
+	cells[2][0] = uint_2;
+	cells[3][0] = uint_3;
+	cells[4][0] = uint_4;
+	cells[5][0] = uint_5;
+	cells[6][0] = uint_6;
+	cells[7][0] = uint_7;
+
+	for (each_y = 1; each_y < 8; each_y++) {
+		for (each_x = 0; each_x < 8; each_x++) {
+			ca_index_0 = wrapped_index(each_x - 1, 8);
+			ca_index_1 = each_x;
+			ca_index_2 = wrapped_index(each_x + 1, 8);
+			ca_in_0 = cells[ca_index_0][each_y - 1];
+			ca_in_1 = cells[ca_index_1][each_y - 1];
+			ca_in_2 = cells[ca_index_2][each_y - 1];
+			ca_out_address = (4 * ca_in_0) + (2 * ca_in_1) + ca_in_2;
+			ca_out = unsigned_int_from_genome(organism, ca_out_address, 1);
+			cells[each_x][each_y] = ca_out;
+		}
+	}
+
+	result_bit_0 = cells[0][7];
+	result_bit_1 = cells[1][7];
+	result_bit_2 = cells[2][7];
+	result = (4 * result_bit_0) + (2 * result_bit_1) + result_bit_2;
+
+	return result;
+}
+
+unsigned int gene_at_virtual_index(organism_t *organism,
+		unsigned int virtual_index)
+{
+	unsigned int actual_index;
+
+	actual_index = wrapped_index(virtual_index, GENOME_LENGTH);
+	return organism->genome[actual_index];
+}
+
+unsigned int gene_start_address(organism_t *organism, unsigned int gene_index)
+{
+	unsigned int address_of_gene_header;
+	unsigned int start_address = 0;
+	unsigned int each_part_of_address;
+	unsigned int each_part_of_address_value = 1;
+
+	address_of_gene_header = GENOME_ADDRESS_SIZE * gene_index;
+	start_address = unsigned_int_from_genome(organism, address_of_gene_header,
+			GENOME_ADDRESS_SIZE);
+	return start_address;
+}
+
+void iterate_organism(world_t *world, organism_t *organism)
+{
+	move_organism(world, organism);
+	meet_organism(world, organism);
+}
+
+void iterate_world(world_t *world)
+{
+	unsigned int each_x;
+    unsigned int each_y;
+
+	for (each_x = 0; each_x < WORLD_WIDTH; each_x++) {
+		for (each_y = 0; each_y < WORLD_HEIGHT; each_y++) {
+			iterate_organism(world, world->organisms[each_x][each_y]);
+		}
+	}
+}
+
+void meet_organism(world_t *world, organism_t *organism)
+{
+	unsigned int exchange_position_index;
+	relative_position_t exchange_position_relative;
+	organism_t *organism_to_exchange_with;
+
+	exchange_position_index = position_index_for_observe_location(world,
+			organism, gene_start_address(organism, GENE_INDEX_MEET_WHO));
+	exchange_position_relative
+		= relative_position_from_index(exchange_position_index);
+	organism_to_exchange_with = organism_at_virtual_coordinates(world,
+			organism->position.x + exchange_position_relative.x,
+			organism->position.y + exchange_position_relative.y);
+
+	meet_organism_details(world, organism, organism_to_exchange_with);
+}
+
+void meet_organism_details(world_t *world, organism_t *organism_a,
+		organism_t *organism_b)
+{
+	meet_gene_t meet_gene;
+	unsigned int meet_gene_start_address;
+	unsigned int each_gene;
+	unsigned int each_gene_virtual;
+	unsigned int temp_gene;
+	position_t temp_position;
+
+	meet_gene_start_address = gene_start_address(organism_a, GENE_INDEX_MEET);
+	parse_meet_gene(organism_a, meet_gene_start_address, &meet_gene);
+
+	for (each_gene = 0; each_gene < meet_gene.length; each_gene++) {
+		each_gene_virtual = wrapped_index(each_gene, GENOME_LENGTH);
+#if MEET_STYLE==MEET_STYLE_PUSH
+		organism_b->genome[each_gene_virtual]
+			= organism_a->genome[each_gene_virtual];
+#endif
+#if MEET_STYLE==MEET_STYLE_PULL
+		organism_a->genome[each_gene_virtual]
+			= organism_b->genome[each_gene_virtual];
+#endif
+#if MEET_STYLE==MEET_STYLE_EXCHANGE
+		temp_gene = organism_a->genome[each_gene_virtual];
+		organism_a->genome[each_gene_virtual]
+			= organism_b->genome[each_gene_virtual];
+		organism_b->genome[each_gene_virtual] = temp_gene;
+#endif
+	}
+}
+
+void move_organism(world_t *world, organism_t *organism)
+{
+	unsigned int new_position_index;
+	relative_position_t new_position_relative;
+	organism_t *organism_to_switch_with;
+	unsigned int switch_to_x;
+	unsigned int switch_to_y;
+
+	new_position_index = position_index_for_observe_location(world, organism,
+			gene_start_address(organism, GENE_INDEX_MOVE));
+	new_position_relative = relative_position_from_index(new_position_index);
+	organism_to_switch_with = organism_at_virtual_coordinates(world,
+			organism->position.x + new_position_relative.x,
+			organism->position.y + new_position_relative.y);
+	switch_to_x = organism_to_switch_with->position.x;
+	switch_to_y = organism_to_switch_with->position.y;
+	world->organisms[switch_to_x][switch_to_y] = organism;
+	world->organisms[organism->position.x][organism->position.y]
+		= organism_to_switch_with;
+
+	/* this could be made cleaner...organisms don't necessarily have to know
+	   their own position */
+	organism_to_switch_with->position.x = organism->position.x;
+	organism_to_switch_with->position.y = organism->position.y;
+	organism->position.x = switch_to_x;
+	organism->position.y = switch_to_y;
+}
+
+organism_t *new_organism(unsigned int position_x, unsigned int position_y)
+{
+	organism_t *organism;
+	unsigned int gene;
+
+	organism = malloc(sizeof(organism_t));
+
+	organism->genome = malloc(sizeof(unsigned int) * GENOME_LENGTH);
+
+	organism->position.x = position_x;
+	organism->position.y = position_y;
+	organism->face = random_unsigned_int(6) + 42;
+
+	for (gene = 0; gene < GENOME_LENGTH; gene++) {
+		organism->genome[gene] = random_unsigned_int(2);
+	}
+
+	return organism;
+}
+
+world_t *new_world()
+{
+	world_t *world;
+	unsigned int each_x;
+	unsigned int each_y;
+
+	world = malloc(sizeof(world_t));
+
+	for (each_x = 0; each_x < WORLD_WIDTH; each_x++) {
+		for (each_y = 0; each_y < WORLD_HEIGHT; each_y++) {
+			world->organisms[each_x][each_y] = new_organism(each_x, each_y);
+		}
+	}
+
+	return world;
+}
+
+organism_t *organism_at_virtual_coordinates(world_t *world, int virtual_x,
+		int virtual_y)
+{
+	unsigned int real_x;
+	unsigned int real_y;
+
+	real_x = wrapped_index(virtual_x, WORLD_WIDTH);
+	real_y = wrapped_index(virtual_y, WORLD_HEIGHT);
+
+	return world->organisms[real_x][real_y];
+}
+
+void parse_display_gene(organism_t *organism, unsigned int gene_start_address,
+		display_gene_t *display_gene)
+{
+	display_gene->red = unsigned_int_from_genome
+		(organism, gene_start_address + 0, 8);
+	display_gene->green = unsigned_int_from_genome
+		(organism, gene_start_address + 8, 8);
+	display_gene->blue = unsigned_int_from_genome
+		(organism, gene_start_address + 16, 8);
+}
+
+void parse_meet_gene(organism_t *organism, unsigned int gene_start_address,
+		meet_gene_t *meet_gene)
+{
+	meet_gene->address = unsigned_int_from_genome
+		(organism, gene_start_address + 0, 8);
+	meet_gene->length = unsigned_int_from_genome
+		(organism, gene_start_address + 8, 8);
+}
+
+unsigned int position_index_for_observe_location(world_t *world,
+		organism_t *organism, unsigned int observe_location)
+{
+	unsigned int observed_0;
+	unsigned int observed_1;
+	unsigned int observed_2;
+	unsigned int observed_3;
+	unsigned int observed_4;
+	unsigned int observed_5;
+	unsigned int observed_6;
+	unsigned int observed_7;
+	organism_t *organism_0;
+	organism_t *organism_1;
+	organism_t *organism_2;
+	organism_t *organism_3;
+	organism_t *organism_4;
+	organism_t *organism_5;
+	organism_t *organism_6;
+	organism_t *organism_7;
+	unsigned int new_position_index;
+
+	organism_0 = organism_at_virtual_coordinates(world,
+			organism->position.x - 1, organism->position.y - 1);
+	organism_1 = organism_at_virtual_coordinates(world,
+			organism->position.x + 0, organism->position.y - 1);
+	organism_2 = organism_at_virtual_coordinates(world,
+			organism->position.x + 1, organism->position.y - 1);
+	organism_3 = organism_at_virtual_coordinates(world,
+			organism->position.x + 1, organism->position.y + 0);
+	organism_4 = organism_at_virtual_coordinates(world,
+			organism->position.x + 1, organism->position.y + 1);
+	organism_5 = organism_at_virtual_coordinates(world,
+			organism->position.x + 0, organism->position.y + 1);
+	organism_6 = organism_at_virtual_coordinates(world,
+			organism->position.x - 1, organism->position.y + 1);
+	organism_7 = organism_at_virtual_coordinates(world,
+			organism->position.x - 1, organism->position.y + 0);
+
+	observed_0 = unsigned_int_from_genome(organism_0, observe_location, 1);
+	observed_1 = unsigned_int_from_genome(organism_1, observe_location, 1);
+	observed_2 = unsigned_int_from_genome(organism_2, observe_location, 1);
+	observed_3 = unsigned_int_from_genome(organism_3, observe_location, 1);
+	observed_4 = unsigned_int_from_genome(organism_4, observe_location, 1);
+	observed_5 = unsigned_int_from_genome(organism_5, observe_location, 1);
+	observed_6 = unsigned_int_from_genome(organism_6, observe_location, 1);
+	observed_7 = unsigned_int_from_genome(organism_7, observe_location, 1);
+
+	new_position_index = eight_from_eight(organism, observed_0, observed_1,
+			observed_2, observed_3, observed_4, observed_5, observed_6,
+			observed_7);
+
+	return new_position_index;
+}
+
+relative_position_t relative_position_from_index(unsigned int index)
+{
+	relative_position_t position;
+
+	switch (index) {
+		case 0:
+			position.x = -1;
+			position.y = -1;
+			break;
+		case 1:
+			position.x = +0;
+			position.y = -1;
+			break;
+		case 2:
+			position.x = +1;
+			position.y = -1;
+			break;
+		case 3:
+			position.x = +1;
+			position.y = +0;
+			break;
+		case 4:
+			position.x = +1;
+			position.y = +1;
+			break;
+		case 5:
+			position.x = +0;
+			position.y = +1;
+			break;
+		case 6:
+			position.x = -1;
+			position.y = +1;
+			break;
+		case 7:
+			position.x = -1;
+			position.y = +0;
+			break;
+	}
+
+	return position;
+}
+
+unsigned int random_unsigned_int(unsigned int range)
+{
+	return random() % range;
+}
+
+unsigned int unsigned_int_from_genome(organism_t *organism,
+		unsigned int gene_start_address, unsigned int gene_length)
+{
+	unsigned int each_part_of_address;
+	unsigned int each_part_of_address_value = 1;
+	unsigned int r = 0;
+	unsigned int gene_end_address;
+
+	gene_end_address = gene_start_address + gene_length;
+
+	for (each_part_of_address = gene_start_address;
+		 each_part_of_address < gene_end_address;
+		 each_part_of_address++) {
+		r += each_part_of_address_value
+			* gene_at_virtual_index(organism, each_part_of_address);
+		each_part_of_address_value *= 2;
+	}
+
+	return r;
+}
+
+unsigned int wrapped_index(int virtual_index, unsigned int range)
+{
+	unsigned int wrapped_index;
+
+	if (virtual_index >= (int) range) {
+		wrapped_index = virtual_index - range;
+	}
+	else if (virtual_index < 0) {
+		wrapped_index = range + virtual_index;
+	}
+	else {
+		wrapped_index = virtual_index;
+	}
+	return wrapped_index;
+}
+
+int main(int argc, char *argv[])
+{
+	world_t *world;
+	unsigned int x;
+	unsigned int y;
+	char c;
+	char color;
+
+	srandom(RANDOM_SEED);
+
+#if CURSES_VISUALIZATION
+	initscr();
+	start_color();
+
+#if CURSES_SOLID_COLORS
+	init_pair(1, COLOR_BLACK, COLOR_RED);
+	init_pair(2, COLOR_BLACK, COLOR_GREEN);
+	init_pair(3, COLOR_BLACK, COLOR_BLUE);
+	init_pair(4, COLOR_BLACK, COLOR_WHITE);
+	init_pair(5, COLOR_BLACK, COLOR_BLACK);
+#else
+	init_pair(1, COLOR_RED, COLOR_BLACK);
+	init_pair(2, COLOR_GREEN, COLOR_BLACK);
+	init_pair(3, COLOR_BLUE, COLOR_BLACK);
+	init_pair(4, COLOR_WHITE, COLOR_BLACK);
+	init_pair(5, COLOR_BLACK, COLOR_BLACK);
+#endif
+
+#endif
+
+	world = new_world();
+	while (1) {
+#if CURSES_VISUALIZATION
+		for (x = 0; x < WORLD_WIDTH; x++) {
+			for (y = 0; y < WORLD_HEIGHT; y++) {
+				if (NULL == world->organisms[x][y]) {
+					color = 'x';
+					c = ' ';
+				}
+				else {
+					color = display_color(world->organisms[x][y]);
+					c = world->organisms[x][y]->face;
+				}
+				switch (color) {
+					case 'r':
+						mvaddch(y, x, c | COLOR_PAIR(1));
+						break;
+					case 'g':
+						mvaddch(y, x, c | COLOR_PAIR(2));
+						break;
+					case 'b':
+						mvaddch(y, x, c | COLOR_PAIR(3));
+						break;
+					case 'w':
+						mvaddch(y, x, c | COLOR_PAIR(4));
+						break;
+					default:
+						mvaddch(y, x, c | COLOR_PAIR(5));
+						break;
+				}
+			}
+		}
+		refresh();
+		usleep(SLEEP_US);
+#endif
+		iterate_world(world);
+	}
+
+#if CURSES_VISUALIZATION
+	endwin();
+#endif
+
+	/* destroy_world(world); */
+}

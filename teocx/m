@@ -1,0 +1,1 @@
+gcc -ansi -O3 -lcurses -o teoc teoc.c
